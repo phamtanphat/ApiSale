@@ -373,6 +373,10 @@ app.post('/cart/update', function (req, res) {
     });
 }) 
 
+app.post('/cart/payment', (req, res) => {
+
+})
+
 // lịch sử giỏ hàng của người dùng
 app.get('/order/history', (req, res) => {
     jwt.verify(extractToken(req), secret, function(err, decoded) {
