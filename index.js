@@ -8,6 +8,7 @@ const User = require("./user")
 const Token = require("./token")
 const Product = require("./product")
 const Order = require("./order")
+const Cart = require("./cart")
 
 
 
@@ -165,7 +166,7 @@ app.post("/user/sign-in",async function(req, res){
     }
 });
 
-app.post('/user/refreshtoken' , function(req, res) {
+app.post('/user/refresh-token' , function(req, res) {
     var {email , password } = req.body
     if(!email || !password){
         res.status(404).json({"result":0, "message": "Email or Password is empty"}).end();
@@ -222,15 +223,34 @@ app.get('/product', (req, res) => {
     })
 })
 
+// get cart
+app.get('/cart', function (req, res) {
+    jwt.verify(extractToken(req), secret, function (err, decoded) {
+        if (err) {
+            return res.status(500).send({ "result": 0, "message": err.message }).end()
+        }
+        const { _id } = decoded.data
+        Cart.findOne({ id_user: _id}, (err, cartData) => {
+            if (err) {
+                return res.status(500).json({ "result": 0, "message": err.message }).end();
+            } else if (!cartData){
+                return res.status(200).json({ "result": 1, "data": []}).end();
+            } else {
+                return res.status(200).json({ "result": 1, "data": cartData }).end();
+            }
+        })
+    });
+})
+
 // create cart
-app.post('/order/add-to-cart',  (req, res) => {
+app.post('/cart/add',  (req, res) => {
     const {id_product} = req.body
     jwt.verify(extractToken(req), secret, function(err, decoded) {
         if(err){
             return res.status(500).send({"result" : 0 , "message" : err.message}).end()
         }
         const {_id} = decoded.data
-        Order.findOne({id_user : _id , status : false}, (err, data)=>{
+        Cart.findOne({id_user : _id}, (err, cart)=>{
             if(err){
                 return res.status(500).json({"result":0, "message": err.message}).end();
             }else{
@@ -241,63 +261,52 @@ app.post('/order/add-to-cart',  (req, res) => {
                         if(!obj){
                             res.status(500).json({"result" : 0 , "message" : "Product is empty"}).end();
                         }else{
-                            if(data == null){
+                            if(cart == null){
                                 // thêm
                                 const products = [{...obj._doc,quantity : 1}]
-                                const newOrder = new Order({ id_user : _id,products, price : obj.price})
-                                newOrder.save(function(err , dataOrder){
+                                const newCart = new Cart({ id_user : _id,products, price : obj.price})
+                                newCart.save(function(err , dataCart){
                                     if(err){
                                         res.status(500).json({"result":0, "message": err.message}).end();
                                     }else{
-                                        res.json({"result":1, "data": dataOrder}).end();
+                                        res.json({ "result": 1, "data": dataCart}).end();
                                     }
                                 })
                             }else{
-                                // Lấy ra thông tin sản phẩm này
-                                Order.findOne({id_user : _id} , function(err , order){
-                                    if(err){
-                                        res.status(500).json({"result" : 0 , "message" : err.message}).end();
-                                    }else{
-                                        if(order == null){
-                                            res.status(500).json({"result" : 0 , "message" : "Order is empty"}).end();
-                                        }else{
-                                            const index = order.products.findIndex((element) => element._id.toString() == obj._id.toString());
-                                            if(index >= 0){
-                                                const products = order.products.map(item => {
-                                                    if(item._id == id_product){
-                                                        return {...item , quantity : item.quantity + 1}
-                                                    }
-                                                    return item
-                                                })
-                                                const totalPrice = products.reduce((total , current) =>{
-                                                    return total + current.price * current.quantity;
-                                                },0);
-                                                Order.findOneAndUpdate({id_user : _id},{products,price: totalPrice} , {new : true} , function(err,newOrder){
-                                                    if(err){
-                                                        res.status(500).json({"result":0, "message": err.message}).end();
-                                                    }else{
-                                                        res.json({"result":1, "data": newOrder}).end();
-                                                    }
-                                                })
-                                            }else{
-                                                const newProduct = {...obj._doc,quantity : 1}
-                                                const products = Object.assign([],order.products)
-                                                products.push(newProduct)
-                                                const totalPrice = products.reduce((total , current) =>{
-                                                    return total + current.price * current.quantity;
-                                                },0);
-                                                Order.findOneAndUpdate({id_user : _id},{products,price: totalPrice} , {new : true} , function(err,newOrder){
-                                                    if(err){
-                                                        res.status(500).json({"result":0, "message": err.message}).end();
-                                                    }else{
-                                                        res.json({"result":1, "data": newOrder}).end();
-                                                    }
-                                                })
-                                            }
-                                        
+                                // Cap nhat gio hang
+                                const index = cart.products.findIndex((element) => element._id.toString() == obj._id.toString());
+                                if (index >= 0) {
+                                    const products = cart.products.map(item => {
+                                        if (item._id == id_product) {
+                                            return { ...item, quantity: item.quantity + 1 }
                                         }
-                                    }
-                                })
+                                        return item
+                                    })
+                                    const totalPrice = products.reduce((total, current) => {
+                                        return total + current.price * current.quantity;
+                                    }, 0);
+                                    Cart.findOneAndUpdate({ id_user: _id }, { products, price: totalPrice }, { new: true }, function (err, cartResponse) {
+                                        if (err) {
+                                            res.status(500).json({ "result": 0, "message": err.message }).end();
+                                        } else {
+                                            res.json({ "result": 1, "data": cartResponse }).end();
+                                        }
+                                    })
+                                } else {
+                                    const newProduct = { ...obj._doc, quantity: 1 }
+                                    const products = Object.assign([], cart.products)
+                                    products.push(newProduct)
+                                    const totalPrice = products.reduce((total, current) => {
+                                        return total + current.price * current.quantity;
+                                    }, 0);
+                                    Cart.findOneAndUpdate({ id_user: _id }, { products, price: totalPrice }, { new: true }, function (err, cartResponse) {
+                                        if (err) {
+                                            res.status(500).json({ "result": 0, "message": err.message }).end();
+                                        } else {
+                                            res.json({ "result": 1, "data": cartResponse }).end();
+                                        }
+                                    })
+                                }
                             }
                         }
                     }
@@ -305,48 +314,22 @@ app.post('/order/add-to-cart',  (req, res) => {
             }
         })
     });
-
-   
-})
-
-// giỏ hàng 
-app.post('/order', (req, res) => {
-
-    jwt.verify(extractToken(req), secret, function(err, decoded) {
-        if(err){
-            return res.status(500).send({"result" : 0 , "message" : err.message}).end()
-        }
-        const {_id} = decoded.data
-        const id_user = _id
-        const id_order = req.body.id_order
-        Order.findOne({id_user,_id : id_order,status : false,}, (err, data)=>{
-            if(err){
-                res.status(500).json({"result":0, "data": "Order is error"});
-            }else{
-                if(data==null){
-                    res.status(500).json({"result":0, "data": "Order is error"});
-                }else{
-                    res.json({"result":1, "data": data});
-                }
-            }
-        })
-    })
 })
 
 //cập nhật giỏ hàng
-app.post('/order/update', function (req, res) {
-    const {id_product,id_order,quantity} = req.body
+app.post('/cart/update', function (req, res) {
+    const {id_product, id_cart, quantity} = req.body
     jwt.verify(extractToken(req), secret, function(err, decoded) {
         if(err){
             return res.status(500).send({"result" : 0 , "message" : err.message}).end()
         }
         const {_id} = decoded.data
-        Order.findOne({id_user : _id , _id : id_order, status : false}, (err, order)=>{
+        Cart.findOne({ id_user: _id, _id: id_cart}, (err, cart)=>{
             if(err){
                 return res.status(500).json({"result":0, "message": err.message}).end();
             }else{
-               if(order == null){
-                return res.status(500).json({"result":0, "message": "Order is error"}).end();
+               if(cart == null){
+                return res.status(500).json({"result":0, "message": "Cart is error"}).end();
                }
                Product.findOne({_id : id_product} ,async function(err , obj){
                 if(err){
@@ -357,14 +340,14 @@ app.post('/order/update', function (req, res) {
                     }else{
                         let products = []
                         if(quantity <= 0){
-                            products = order.products.filter(item => {
+                            products = cart.products.filter(item => {
                                 if(item._id == id_product){
                                     return false
                                 }
                                 return true
                             }) 
                         }else{
-                            products = order.products.map(item => {
+                            products = cart.products.map(item => {
                                 if(item._id == id_product){
                                     return {...item , quantity}
                                 }
@@ -375,17 +358,16 @@ app.post('/order/update', function (req, res) {
                         const totalPrice = products.reduce((total , current) =>{
                             return total + current.price * current.quantity;
                         },0);
-                        Order.findOneAndUpdate({id_user : _id},{products,price: totalPrice} , {new : true} , function(err,newOrder){
+                        Cart.findOneAndUpdate({id_user : _id},{products, price: totalPrice} , {new : true} , function(err, newCart){
                             if(err){
                                 res.status(500).json({"result":0, "message": err.message}).end();
                             }else{
-                                res.json({"result":1, "data": newOrder}).end();
+                                res.json({ "result": 1, "data": newCart}).end();
                             }
                         })
                     }
                 }
-            })
-               
+               })
             }
         })
     });
