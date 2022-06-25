@@ -2,15 +2,14 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const {json} = require('body-parser');
-
+const randomstring = require("randomstring");
 
 const User = require("./user")
 const Token = require("./token")
 const Product = require("./product")
 const Order = require("./order")
 const Cart = require("./cart")
-
-
+const order = require('./order');
 
 const app = express();
 
@@ -116,6 +115,7 @@ app.post("/user/sign-in",async function(req, res){
                                 res.status(500).json({"result":0, "message":err}).end();
                             }
                             if(!responseToken){
+                                item.randomstring = randomstring.generate()
                                 var objectToken = {
                                     exp: Math.floor(Date.now() / 1000) + (60 * 60 * 60 * 60 * 60),
                                     data: item
@@ -166,6 +166,7 @@ app.post("/user/sign-in",async function(req, res){
     }
 });
 
+// refresh token
 app.post('/user/refresh-token' , function(req, res) {
     var {email , password } = req.body
     if(!email || !password){
@@ -179,6 +180,7 @@ app.post('/user/refresh-token' , function(req, res) {
                     if(err || resB === false){
                         res.status(500).json({"result":0, "message":"Password is error"}).end();
                     }else{
+                        item.randomstring = randomstring.generate()
                         var objectToken = {
                             exp: Math.floor(Date.now() / 1000) + (60 * 60 * 60 * 60 * 60),
                             data: item
@@ -189,7 +191,7 @@ app.post('/user/refresh-token' , function(req, res) {
                             user:item._id,
                             dateCreated:Date.now()
                         });
-                        Token.findOneAndUpdate({user : item._id}, {$set:{token: newToken.token, dateCreated: newToken.dateCreated}}, function(err , responseToken){
+                        Token.findOneAndUpdate({user : item._id}, {$set:{token: newToken.token, dateCreated: newToken.dateCreated}}, {new: true}, function(err , responseToken){
                             if(err){
                                return res.status(500).json({"result":0, "message":err}).end();
                             }
@@ -249,17 +251,18 @@ app.post('/cart/add',  (req, res) => {
         if(err){
             return res.status(500).send({"result" : 0 , "message" : err.message}).end()
         }
-        const {_id} = decoded.data
+        var {_id} = decoded.data
         Cart.findOne({id_user : _id}, (err, cart)=>{
             if(err){
                 return res.status(500).json({"result":0, "message": err.message}).end();
             }else{
-                Product.findOne({_id : id_product} ,async function(err , obj){
+                console.log(_id)
+                Product.findOne({_id : id_product}, function(err , obj){
                     if(err){
                         res.status(500).json({"result" : 0 , "message" : err.message}).end();
                     }else{
                         if(!obj){
-                            res.status(500).json({"result" : 0 , "message" : "Product is empty"}).end();
+                            res.status(500).json({"result" : 0 , "message" : "Product is error"}).end();
                         }else{
                             if(cart == null){
                                 // thêm
@@ -316,7 +319,7 @@ app.post('/cart/add',  (req, res) => {
     });
 })
 
-//cập nhật giỏ hàng
+// update cart
 app.post('/cart/update', function (req, res) {
     const {id_product, id_cart, quantity} = req.body
     jwt.verify(extractToken(req), secret, function(err, decoded) {
@@ -336,7 +339,7 @@ app.post('/cart/update', function (req, res) {
                     res.status(500).json({"result" : 0 , "message" : "Product is error"}).end();
                 }else{
                     if(!obj){
-                        res.status(500).json({"result" : 0 , "message" : "Product is empty"}).end();
+                        res.status(500).json({"result" : 0 , "message" : "Product is not correct"}).end();
                     }else{
                         let products = []
                         if(quantity <= 0){
@@ -373,55 +376,56 @@ app.post('/cart/update', function (req, res) {
     });
 }) 
 
-app.post('/cart/payment', (req, res) => {
-
+app.post('/cart/conform', (req, res) => {
+    const {id_cart} = req.body
+    jwt.verify(extractToken(req), secret, function(err, decoded) {
+        if(err){
+            return res.status(500).send({"result" : 0 , "message" : err.message}).end()
+        }
+        const {_id} = decoded.data
+        Cart.findOne({id_user: _id, _id : id_cart}, (err, cart) => {
+            if(err){
+                return res.status(500).json({"result":0, "message": err.message}).end();
+            }else{
+                if(cart == null){
+                    return res.status(500).json({"result":0, "message": "Cart is not found"}).end();
+                }
+                const newOrder = new Order({products: cart.products, id_user: cart.id_user, status: false})
+                newOrder.save(async function(err , dataOrder){
+                    if(err){
+                        return res.status(500).json({"result":0, "message": err.message}).end();
+                    }else{
+                        try {
+                            await Cart.findOneAndDelete({_id: id_cart})
+                            return res.json({ "result": 1, "data": "You have order success"}).end();
+                        } catch (error) {
+                            return res.status(500).json({"result":0, "message": error.message}).end();
+                        }
+                    }
+                })
+                
+        
+            }
+        })
+    });
 })
 
 // lịch sử giỏ hàng của người dùng
-app.get('/order/history', (req, res) => {
+app.post('/order/history', (req, res) => {
     jwt.verify(extractToken(req), secret, function(err, decoded) {
         if(err){
             return res.status(500).send({"result" : 0 , "message" : err.message}).end()
         }
         const {_id} = decoded.data
         const id_user = _id
-        Order.find({id_user , status : true}, (err, data)=>{
+        Order.find({id_user}, (err, data)=>{
             if(err){
                 res.status(500).json({"result":0, "data": "Order is error"});
             }else{
                 if(data==null){
-                    res.json({"result":0, "data": "Không có sản phẩm nào."});
+                    res.json({"result":0, "data": "Order is empty"});
                 }else{
                     res.json({"result":1, "data": data});
-                }
-            }
-        })
-    })
-})
-
-// confirm giỏ hàng
-app.post('/order/confirm', (req, res) => {
-    const{id_order , status} = req.body;
-    jwt.verify(extractToken(req), secret, function(err, decoded) {
-        if(err){
-            return res.status(500).send({"result" : 0 , "message" : err.message}).end()
-        }
-        const {_id} = decoded.data
-        const id_user = _id
-        Order.findOne({id_user,_id : id_order,status : false}, (err, data)=>{
-            if(err){
-                res.status(500).json({"result":0, "data": "Lỗi database."});
-            }else{
-                if(data == null){
-                    res.status(500).json({"result":0, "data": "Order is error"});
-                }else{
-                    Order.findOneAndUpdate({id_user,_id : id_order,status : false},{status} , {new : true} , function(err,newOrder){
-                        if(err){
-                            res.status(500).json({"result":0, "message": err.message}).end();
-                        }else{
-                            res.json({"result":1, "data": "Order confirm success"}).end();
-                        }
-                    })
                 }
             }
         })
